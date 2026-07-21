@@ -24,8 +24,8 @@ if ! command -v deno &> /dev/null; then
 fi
 
 rm -rf New_Reapo
-git clone https://github.com/rockyxd3/New_Reapo.git
-cd New_Reapo
+git clone https://github.com/rockyxd3/auro-zara.git
+cd auro-zara
 
 cat << 'EOF' > .env
 API_ID=36354238
@@ -44,7 +44,7 @@ python3 -m venv venv
 ./venv/bin/pip install -r requirements.txt
 
 tmux kill-session -t musicbot 2>/dev/null || true
-tmux new-session -d -s musicbot './venv/bin/python3 -m anony'
+tmux new-session -d -s musicbot './venv/bin/python3 -m auro'
 
 sleep 4
 
