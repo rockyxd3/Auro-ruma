@@ -1,7 +1,7 @@
 from pyrogram import filters, types
 
-from anony import app, config, db, lang, queue, thumb
-from anony.helpers import Track, buttons
+from auro import app, config, db, lang, queue, thumb
+from auro.helpers import Track, buttons
 
 
 @app.on_message(filters.command(["queue", "playing"]) & filters.group & ~app.bl_users)
