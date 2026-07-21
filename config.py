@@ -22,11 +22,11 @@ class Config:
         self.SESSION2 = getenv("SESSION2", None)
         self.SESSION3 = getenv("SESSION3", None)
 
-        self.SUPPORT_CHANNEL = getenv("SUPPORT_CHANNEL", "https://t.me/rossy_music_world")
+        self.SUPPORT_CHANNEL = getenv("SUPPORT_CHANNEL", "https://t.me/teamAuro")
         self.SUPPORT_CHAT = getenv("SUPPORT_CHAT", "https://t.me/Aurosupport")
 
         self.API_URL = getenv("API_URL", getenv("MusicSp_API_URL", "https://apisparrow.site"))
-        self.API_KEY = getenv("API_KEY", getenv("MusicSp_API_KEY", "")) # Get API Key from @SpYtAPIBot if required
+        self.API_KEY = getenv("API_KEY", getenv("MusicSp_API_KEY", "sparrowGQfbBI5nIbv44KHfTJGcKqju")) # Get API Key from @SpYtAPIBot if required
 
         self.AUTO_LEAVE: bool = getenv("AUTO_LEAVE", "False").lower() == "False"
         self.AUTO_END: bool = getenv("AUTO_END", "False").lower() == "False"
@@ -42,7 +42,7 @@ class Config:
         ]
         self.DEFAULT_THUMB = getenv("DEFAULT_THUMB", "https://te.legra.ph/file/3e40a408286d4eda24191.jpg")
         self.PING_IMG = getenv("PING_IMG", "https://files.catbox.moe/haagg2.png")
-        self.START_VIDEO = getenv("START_VIDEO", "https://graph.org/file/6b9ed9fec20aaf924c467-c6e3a228cf7f7ec422.mp4")
+        self.START_VIDEO = getenv("START_VIDEO", "https://graph.org/file/ad15e8b2f052e78256339-0c87eb7568d3e947e7.mp4")
 
     def check(self):
         missing = [
