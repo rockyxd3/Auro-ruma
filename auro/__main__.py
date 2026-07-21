@@ -24,7 +24,7 @@ async def main():
     await auro.boot()
 
     for module in all_modules:
-        importlib.import_module(f"anony.plugins.{module}")
+        importlib.import_module(f"auro.plugins.{module}")
     logger.info(f"Loaded {len(all_modules)} modules.")
 
     if config.COOKIES_URL:
