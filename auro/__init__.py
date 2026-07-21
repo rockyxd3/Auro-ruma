@@ -54,7 +54,7 @@ queue = Queue()
 thumb = Thumbnail()
 
 from auro.core.calls import TgCall
-anon = TgCall()
+auro = TgCall()
 
 
 async def stop() -> None:
