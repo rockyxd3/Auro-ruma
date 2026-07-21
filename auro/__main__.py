@@ -3,7 +3,7 @@ import signal
 import importlib
 from contextlib import suppress
 
-from auro import (auro, app, config, db, logger,
+from auro import (app, config, db, logger,
                    stop, thumb, userbot, yt)
 from auro.plugins import all_modules
 
@@ -21,7 +21,6 @@ async def main():
     await db.connect()
     await app.boot()
     await userbot.boot()
-    await auro.boot()
 
     for module in all_modules:
         importlib.import_module(f"auro.plugins.{module}")
