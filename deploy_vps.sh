@@ -28,15 +28,15 @@ git clone https://github.com/rockyxd3/auro-zara.git
 cd auro-zara
 
 cat << 'EOF' > .env
-API_ID=36354238
-API_HASH=o64pd7z.mongodb.net/?retryWrites=true&w=majority
-BOT_TOKEN=8808199635:AAEDcCjThXkse7Qf5LloPEV5TwafHtiuAng
-MONGO_URL=mongodb+srv://Mecobot:Mecobots@cluster0.o64pd7z.mongodb.net/?retryWrites=true&w=majority
-LOGGER_ID=-1004468370263
-OWNER_ID=8935584927
-SESSION=AgHUtygAM2l9LEEABsjisccCnBTRcJ0MzlG6_BtqXqpegu7sfSCfZovZCP7RYdMdnyFiNtzwoQcvTWuRoOvv5AAg4QAgZ9OxQBtWxMrce33jtNNoTzc9B5TdYRI2TpddX9nyZds4iznnNRlBkmokVUT3TqHGIz0CuVPy7Mwz4f2-rSiwhFbE03oEOckbe0rMgWYeh200IfA7_a29qgNZk-8AqWxnhv_ys1ge7oxL5j6TUmQY6VpLb71MLwLrrLZs-MzGnwLuu624pSUpgqztqXYOCZTm0iiyZjJBbnV-L8SqUmWLePt46j8W8ohhtvbKaV0iseE7pdfxTrP123TjYt2m9c7EAwAAAAH1c_4KAA
+API_ID=30760740
+API_HASH=4d595bd36b2bd105ea79b10b3e3674e1
+BOT_TOKEN=8310754623:AAFi6EFt9iGkomsSSYDDGH4msx1-QQO3N74
+MONGO_URL=mongodb+srv://Govo:Govo@govo.fxh5zyz.mongodb.net/?retryWrites=true&w=majority
+LOGGER_ID=-1003724317042
+OWNER_ID=7632048577
+SESSION=BQHVXyQAi81K-rYtZXi2gOf4DnJcLPn7Qsy3Zk_1g4XFBXPx05JxYAwoQPIy6sxbErAsFnEeYkz8ag9liP-FELKzRD58uAjDAYjC-W9oid0NwH_dNsOM5WUTvqUT_QSI_DjxCTRXqSwuJvgqy9Zw6EUg-yb2m_79NEu7q__zNqNxrNQB7T8n-fUFy45XNnIMajTEufgyHCFped6lkkO-tUWjD5sqD9V4eRYBPWOWxFsTjhN2S6bF2pCRQ6IVv010Ub6pnoKeGctohkjCPvNpmkFFn8UCzKkU6L5E-e-4cUn6AkdD_2L4ts2qgkdcYrUoWp43Fk35JCa0DjldWsAaKlVClpDC2gAAAAH87swMAA
 API_URL=https://apisparrow.site
-API_KEY=sparrowzbA9h4lRscohX1HH1raPTKkX
+API_KEY=sparrowGQfbBI5nIbv44KHfTJGcKqju
 EOF
 
 python3 -m venv venv
