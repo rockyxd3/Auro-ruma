@@ -26,7 +26,7 @@ class Config:
         self.SUPPORT_CHAT = getenv("SUPPORT_CHAT", "https://t.me/Aurosupport")
 
         self.API_URL = getenv("API_URL", getenv("MusicSp_API_URL", "https://apisparrow.site"))
-        self.API_KEY = getenv("API_KEY", getenv("MusicSp_API_KEY", "sparrowGQfbBI5nIbv44KHfTJGcKqju")) # Get API Key from @SpYtAPIBot if required
+        self.API_KEY = getenv("API_KEY", getenv("MusicSp_API_KEY", "sparrownhhJUQYo5QvMnred9S2YPcEi")) # Get API Key from @SpYtAPIBot if required
 
         self.AUTO_LEAVE: bool = getenv("AUTO_LEAVE", "False").lower() == "False"
         self.AUTO_END: bool = getenv("AUTO_END", "False").lower() == "False"
