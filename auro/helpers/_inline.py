@@ -88,11 +88,13 @@ class Inline:
                         self.ikb(
                             text=lang["add_mee"] if lang else "Add Me",
                             url=f"https://t.me/{app.username}?startgroup=true",
+                            style=ButtonStyle.SUCCESS,
                             icon_custom_emoji_id=5409025823388741707,
                         ),
                         self.ikb(
                             text="ᴄʟᴏsᴇ",
                             callback_data=f"controls close {chat_id}",
+                            style=ButtonStyle.DANGER
                             icon_custom_emoji_id=5408832111773757273,
                         ),
                     ]
