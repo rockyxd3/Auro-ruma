@@ -30,7 +30,7 @@ class MusicTrack:
 class FallenApi:
     def __init__(
             self, api_url: str, api_key: str,
-            retries: int = 3, timeout: int = 10,
+            retries: int = 2, timeout: int = 3,
         ):
         self.api_url = api_url
         self.api_key = api_key
