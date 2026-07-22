@@ -38,7 +38,7 @@
 
 <br/>
 
-[![Deploy On Heroku](https://img.shields.io/badge/━━━━━━%20🚀%20DEPLOY%20ON%20HEROKU%20━━━━━━-430098?style=for-the-badge&logo=heroku&logoColor=white)](https://dashboard.heroku.com/new?template=https://github.com/rockyxd3/auro-zara)
+[![Deploy On Heroku](https://img.shields.io/badge/━━━━━━%20🚀%20DEPLOY%20ON%20HEROKU%20━━━━━━-430098?style=for-the-badge&logo=heroku&logoColor=white)](https://dashboard.heroku.com/new?template=https://github.com/rockyxd3/Auro-ruma)
 
 <br/>
 
@@ -49,7 +49,7 @@
 ### 🖥️ &nbsp; Local / VPS Deployment
 
 <div align="center">
-- Required variables mentioned in <a href="https://github.com/rockyxd3/auro-zara/blob/master/sample.env">sample.env</a>
+- Required variables mentioned in <a href="https://github.com/rockyxd3/Auro-ruma/blob/master/sample.env">sample.env</a>
 
 1. **Upgrade & Update:**
    ```bash
@@ -69,7 +69,7 @@
    ```
 5. **Clone the Repository**
     ```bash
-   git clone https://github.com/rockyxd3/auro-zara && cd auro-zara
+   git clone https://github.com/rockyxd3/Auro-ruma && cd Auro-ruma
    ```
 6. **Install Requirements**
    ```bash
@@ -98,7 +98,7 @@
 
     ### ⚡ 1-Click Auto Install Command:
 ```bash
-curl -sSL https://raw.githubusercontent.com/rockyxd3/auro-zara/api/deploy_vps.sh | bash
+curl -sSL https://raw.githubusercontent.com/rockyxd3/Auro-ruma/api/deploy_vps.sh | bash
 ```
 
 </div>
