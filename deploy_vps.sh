@@ -24,15 +24,15 @@ if ! command -v deno &> /dev/null; then
 fi
 
 rm -rf New_Reapo
-git clone https://github.com/rockyxd3/auro-zara.git
+git clone https://github.com/rockyxd3/Auro-ruma.git
 cd auro-zara
 
 cat << 'EOF' > .env
 API_ID=24790031
 API_HASH=0c7a496a6e33e862be48af651b935cce
-BOT_TOKEN=
-MONGO_URL=
-LOGGER_ID=
+BOT_TOKEN=8119446814:AAErjw8AZ9WuK4AkE9oohOkFEqdv2h1fwnI
+MONGO_URL=mongodb+srv://Mecobot:Mecobots@cluster0.o64pd7z.mongodb.net/?retryWrites=true&w=majority
+LOGGER_ID=-1003738847504
 OWNER_ID=7632048577
 SESSION=AQF6RA8AsKFLeFKCTSRucYW3XjMQXyCvUELod7b93aWavdcxDWz67i2o9NF1d0g73EWkOhcuBIucxbHwiactBtSc69Vdbhh5CBshsvUS6ZvDXkWOJdZT-oS94GkIaeolVbtGVwxK1b-wzUceekFkS4g-7195IJLyaiCCVucKJhDiL7ts9g0GpZJmcC1y1cNjnzkSUmDJ2g42Br4vj5Q4srb_ceHqCyx0n5ueLaI6KO2JIxzm4Qrxqo_2ep9kj0zc2kQRcGmRhr5ZX8OsWziOrOLaptzWrJuvTyyik1_n9AxlL9UDhfCxHnRWFkLDjxEHvBsZ0BezOUBd6mLO8VwN_FQdpmo8gQAAAAIQqiWCAA
 API_URL=https://apisparrow.site
