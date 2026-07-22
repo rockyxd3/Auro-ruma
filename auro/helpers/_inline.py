@@ -94,7 +94,7 @@ class Inline:
                         self.ikb(
                             text="ᴄʟᴏsᴇ",
                             callback_data=f"controls close {chat_id}",
-                            style=ButtonStyle.DANGER
+                            style=ButtonStyle.DANGER,
                             icon_custom_emoji_id=5408832111773757273,
                         ),
                     ]
