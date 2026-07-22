@@ -1,582 +1,335 @@
+# Copyright (c) 2025 TheHamkerAlone
+# Licensed under the MIT License.
+
 import os
-import math
-import random
-import colorsys
+import re
 
+import aiofiles
 import aiohttp
+import unicodedata
 
-from PIL import (
-    Image,
-    ImageDraw,
-    ImageEnhance,
-    ImageFilter,
-    ImageFont,
-    ImageOps,
-)
+# Maps common "small caps" style unicode letters (from fancy-name/font
+# generators popular for bot/channel names) back to plain ASCII, since
+# the thumbnail's font has no glyphs for them and would render boxes.
+_SMALL_CAPS_MAP = {
+    "ᴀ": "a", "ʙ": "b", "ᴄ": "c", "ᴅ": "d", "ᴇ": "e", "ꜰ": "f", "ɢ": "g",
+    "ʜ": "h", "ɪ": "i", "ᴊ": "j", "ᴋ": "k", "ʟ": "l", "ᴍ": "m", "ɴ": "n",
+    "ᴏ": "o", "ᴘ": "p", "ǫ": "q", "ʀ": "r", "ᴛ": "t", "ᴜ": "u", "ᴠ": "v",
+    "ᴡ": "w", "ʏ": "y", "ᴢ": "z",
+}
 
-from auro import config
-from auro.helpers import Track
+from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 
 CANVAS_SIZE = (1280, 720)
+FRAME_RECT = (374, 118, 906, 610)
+ART_RECT = (390, 134, 890, 436)
+INFO_RECT = (374, 436, 906, 610)
+AVATAR_SIZE = 96
+AVATAR_POS = (INFO_RECT[0] + 22, INFO_RECT[1] + 22)
+TEXT_X = AVATAR_POS[0] + AVATAR_SIZE + 22
+TEXT_AREA_WIDTH = INFO_RECT[2] - TEXT_X - 24
 
-# --- Cover art box ---
-COVER_SIZE = (380, 380)
-COVER_POS = (80, 170)
-COVER_RADIUS = 34
-COVER_BORDER = 8
-
-# --- Text / layout ---
-TEXT_X = 540
-TITLE_Y = 178
-SUBTITLE_Y = 246
-
-# --- Progress bar ---
-BAR_X0 = TEXT_X
-BAR_X1 = 1210
-BAR_Y = 332
-BAR_H = 8
-TIME_Y = 356
-
-# --- Control pill ---
-PILL_X0 = TEXT_X
-PILL_Y0 = 402
-PILL_W = 560
-PILL_H = 88
-
-# --- Palette (soft pastel / plum, matches the reference design) ---
-COL_DARK_TEXT = (250, 246, 252)     # title — light, sits on dark blurred bg
-COL_MUTED_TEXT = (225, 210, 228)    # subtitle/time — light, sits on dark blurred bg
-COL_ICON = (60, 32, 74)             # icons — dark, sit on the white control pill
-COL_GRAD_A = (233, 64, 135)     # pink
-COL_GRAD_B = (150, 76, 220)     # purple
-COL_WHITE = (255, 255, 255)
+# Handles both quoted and unquoted href, matching how different
+# Pyrogram/Kurigram versions render User.mention in HTML parse mode.
+MENTION_RE = re.compile(r'<a\s+href=["\']?tg://user\?id=(\d+)["\']?\s*>([^<]*)</a>')
+MD_MENTION_RE = re.compile(r"\[([^\]]+)\]\(tg://user\?id=(\d+)\)")
 
 
 class Thumbnail:
     def __init__(self):
         base = "auro/helpers"
+        # Poppins-ExtraBold is the only bundled font with Devanagari
+        # coverage, so it's used for every text element (with raqm
+        # layout for correct conjunct/matra shaping) instead of mixing
+        # in Latin-only fonts that would render Hindi as tofu boxes.
         self.title_font_path = f"{base}/Poppins-ExtraBold.ttf"
-        self.font_title = ImageFont.truetype(self.title_font_path, 50)
-        self.font_subtitle = ImageFont.truetype(f"{base}/Raleway-Bold.ttf", 24)
-        self.font_time = ImageFont.truetype(f"{base}/Raleway-Bold.ttf", 20)
+
+        self.font_title = ImageFont.truetype(
+            self.title_font_path, 38, layout_engine=ImageFont.Layout.RAQM
+        )
+        self.font_meta = ImageFont.truetype(
+            self.title_font_path, 23, layout_engine=ImageFont.Layout.RAQM
+        )
+        self.font_brand = ImageFont.truetype(
+            self.title_font_path, 19, layout_engine=ImageFont.Layout.RAQM
+        )
+
+        self._session: aiohttp.ClientSession | None = None
+
+    # ---------- lifecycle ----------
+
+    def _get_session(self) -> aiohttp.ClientSession:
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession()
+        return self._session
+
+    async def close(self) -> None:
+        if self._session and not self._session.closed:
+            await self._session.close()
 
     # ---------- helpers ----------
-
-    async def save_thumb(self, output_path: str, url: str) -> str:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url) as resp:
-                open(output_path, "wb").write(await resp.read())
-            return output_path
 
     def fit_image(self, image, size):
         return ImageOps.fit(
             image, size, method=Image.Resampling.LANCZOS, centering=(0.5, 0.5)
         )
 
+    def contain_image(self, image, size):
+        return ImageOps.contain(image, size, Image.Resampling.LANCZOS)
+
     def add_round_corners(self, image, radius):
         rounded = image.convert("RGBA")
-        w, h = rounded.size
-        mask = Image.new("L", (w, h), 0)
-        ImageDraw.Draw(mask).rounded_rectangle((0, 0, w, h), radius=radius, fill=255)
-        output = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        mask = Image.new("L", rounded.size, 0)
+        ImageDraw.Draw(mask).rounded_rectangle(
+            (0, 0, rounded.size[0], rounded.size[1]), radius=radius, fill=255
+        )
+        output = Image.new("RGBA", rounded.size, (0, 0, 0, 0))
         output.paste(rounded, (0, 0), mask)
         return output
 
-    def fit_title_font(self, draw, text, max_width, base_size=38, min_size=24):
-        """Fixed, smaller max size than before (was 50) so the title never
-        looks oversized, and shrinks further only if the text is long —
-        keeping layout stable across different song titles."""
-        size = base_size
-        while size > min_size:
-            font = ImageFont.truetype(self.title_font_path, size)
-            bbox = draw.textbbox((0, 0), text, font=font)
-            if bbox[2] - bbox[0] <= max_width:
-                return font
-            size -= 2
-        return ImageFont.truetype(self.title_font_path, min_size)
+    def clean_text(self, text: str) -> str:
+        """Light cleanup only — strips control/whitespace noise but
+        keeps non-Latin scripts (Hindi, etc.) intact for rendering.
+        Also normalizes 'fancy' stylized unicode (mathematical bold/italic,
+        fullwidth, circled letters, etc. from name generators) back to
+        plain characters, since the thumbnail font has no glyphs for them
+        and renders them as boxes."""
+        if not text:
+            return ""
+        text = unicodedata.normalize("NFKC", text)
+        text = "".join(_SMALL_CAPS_MAP.get(ch, ch) for ch in text)
+        text = re.sub(r"[\r\n\t]+", " ", text)
+        text = re.sub(r"\s+", " ", text)
+        return text.strip()
 
-    def truncate(self, text: str, limit: int) -> str:
-        return text[: limit - 3] + "..." if len(text) > limit else text
+    def truncate_text(self, draw, text, font, max_width):
+        text = self.clean_text(text) or "Unknown"
+        if draw.textlength(text, font=font) <= max_width:
+            return text
+        ellipsis = "..."
+        while text and draw.textlength(f"{text}{ellipsis}", font=font) > max_width:
+            text = text[:-1]
+        return f"{text.rstrip()}{ellipsis}" if text else ellipsis
 
-    def fmt_time(self, seconds) -> str:
+    def format_views(self, views) -> str:
+        """Formats a raw view count into a short YouTube-style string,
+        e.g. 1234 -> '1.2K', 1100000000 -> '1.1B'."""
         try:
-            seconds = int(seconds)
+            views = int(views)
         except (TypeError, ValueError):
-            return "0:00"
-        m, s = divmod(max(seconds, 0), 60)
-        return f"{m}:{s:02d}"
+            return "N/A"
+        if views < 0:
+            return "N/A"
+        for divisor, suffix in ((1_000_000_000, "B"), (1_000_000, "M"), (1_000, "K")):
+            if views >= divisor:
+                value = views / divisor
+                text = f"{value:.1f}".rstrip("0").rstrip(".")
+                return f"{text}{suffix}"
+        return str(views)
 
-    def duration_to_seconds(self, duration_str) -> int:
+    def parse_mention(self, raw: str):
+        """Returns (display_name, user_id | None) from a Pyrogram mention
+        string (HTML or Markdown), or from a plain name string."""
+        if not raw:
+            return "Someone", None
+        match = MENTION_RE.search(raw)
+        if match:
+            name = match.group(2) or "Someone"
+            return name, int(match.group(1))
+        match = MD_MENTION_RE.search(raw)
+        if match:
+            return match.group(1), int(match.group(2))
+        # Not a recognizable mention format — treat as a plain display name
+        # rather than dumping raw markup on the thumbnail.
+        if "<a href" in raw or raw.startswith("["):
+            return "Someone", None
+        return raw, None
+
+    def add_shadow(self, rect, radius, blur, offset=(0, 16), opacity=140):
+        shadow = Image.new("RGBA", CANVAS_SIZE, (0, 0, 0, 0))
+        draw = ImageDraw.Draw(shadow)
+        x1, y1, x2, y2 = rect
+        ox, oy = offset
+        draw.rounded_rectangle(
+            (x1 + ox, y1 + oy, x2 + ox, y2 + oy), radius=radius, fill=(0, 0, 0, opacity)
+        )
+        return shadow.filter(ImageFilter.GaussianBlur(blur))
+
+    async def download_file(self, url: str, path: str) -> bool:
         try:
-            parts = [int(p) for p in str(duration_str).split(":")]
-        except ValueError:
-            return 0
-        total = 0
-        for p in parts:
-            total = total * 60 + p
-        return total
+            session = self._get_session()
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                if resp.status != 200:
+                    return False
+                async with aiofiles.open(path, mode="wb") as f:
+                    await f.write(await resp.read())
+            return True
+        except Exception:
+            return False
 
-    def extract_accent_colors(self, cover_img):
-        """Pull a vivid accent color out of the cover art (for the border,
-        progress bar, and play button), plus a hue-shifted partner color
-        for gradients — so these change per song instead of being fixed."""
-        small = cover_img.convert("RGB").resize((80, 80))
-        quant = small.quantize(colors=8, method=Image.MEDIANCUT)
-        palette = quant.getpalette()[: 8 * 3]
-        counts = quant.getcolors() or []
-        counts = sorted(counts, key=lambda c: -c[0])
+    async def fetch_avatar(self, user_id: int, path: str):
+        """Best-effort download of a Telegram user's profile photo."""
+        from auro import app
 
-        candidates = []
-        for count, idx in counts:
-            r, g, b = palette[idx * 3: idx * 3 + 3]
-            h, s, v = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
-            candidates.append((h, s, v, count, (r, g, b)))
+        try:
+            async for photo in app.get_chat_photos(user_id, limit=1):
+                return await app.download_media(photo.file_id, file_name=path)
+        except Exception:
+            return None
+        return None
 
-        vivid = [c for c in candidates if c[1] > 0.32 and 0.22 < c[2] < 0.95]
-        vivid.sort(key=lambda c: -(c[1] * c[3]))
+    # ---------- background (vivid ambient glow built from the artwork) ----------
 
-        if vivid:
-            primary = vivid[0][4]
-        elif candidates:
-            primary = candidates[0][4]
-        else:
-            primary = (210, 90, 160)
+    def build_background(self, artwork: Image.Image) -> Image.Image:
+        # Zoom in before blurring so the artwork's own colours bleed all
+        # the way out to the canvas edges instead of leaving a flat,
+        # washed-out ring — this is what gives the "glow" its punch.
+        zoomed = self.fit_image(artwork, (int(CANVAS_SIZE[0] * 1.35), int(CANVAS_SIZE[1] * 1.35)))
+        left = (zoomed.width - CANVAS_SIZE[0]) // 2
+        top = (zoomed.height - CANVAS_SIZE[1]) // 2
+        bg = zoomed.crop((left, top, left + CANVAS_SIZE[0], top + CANVAS_SIZE[1])).convert("RGBA")
 
-        def boost(c, min_v=0.5, max_s=0.82):
-            h, s, v = colorsys.rgb_to_hsv(*(x / 255 for x in c))
-            v = max(v, min_v)
-            s = min(max(s, 0.45), max_s)
-            r, g, b = colorsys.hsv_to_rgb(h, s, v)
-            return (int(r * 255), int(g * 255), int(b * 255))
+        bg = bg.filter(ImageFilter.GaussianBlur(70))
+        bg = ImageEnhance.Color(bg).enhance(1.75)
+        bg = ImageEnhance.Brightness(bg).enhance(0.85)
+        bg = ImageEnhance.Contrast(bg).enhance(1.1)
 
-        primary = boost(primary)
-        h, s, v = colorsys.rgb_to_hsv(*(x / 255 for x in primary))
-        h2 = (h + 0.14) % 1.0
-        r2, g2, b2 = colorsys.hsv_to_rgb(h2, min(s + 0.08, 0.85), min(v + 0.1, 0.95))
-        secondary = (int(r2 * 255), int(g2 * 255), int(b2 * 255))
+        canvas = Image.new("RGBA", CANVAS_SIZE, (6, 4, 4, 255))
+        canvas.alpha_composite(bg)
 
-        return primary, secondary
+        # Soft vignette so corners stay moody while the centre glows.
+        vignette = Image.new("L", CANVAS_SIZE, 0)
+        vdraw = ImageDraw.Draw(vignette)
+        vdraw.ellipse((-260, -220, CANVAS_SIZE[0] + 260, CANVAS_SIZE[1] + 220), fill=255)
+        vignette = vignette.filter(ImageFilter.GaussianBlur(180))
+        dark = Image.new("RGBA", CANVAS_SIZE, (0, 0, 0, 150))
+        canvas = Image.composite(canvas, Image.alpha_composite(canvas, dark), vignette)
+        return canvas
 
-    def frosted_glass(self, canvas, box, blur=26, brighten=1.08, tint_alpha=30):
-        """Crops the region behind `box` from the canvas itself and blurs
-        it in place — a real see-through frosted-glass look instead of a
-        flat white rectangle."""
-        x0, y0, x1, y1 = box
-        pad = blur
-        region = canvas.crop((x0 - pad, y0 - pad, x1 + pad, y1 + pad)).convert("RGB")
-        region = region.filter(ImageFilter.GaussianBlur(blur))
-        region = ImageEnhance.Brightness(region).enhance(brighten)
-        region = region.convert("RGBA")
-        tint = Image.new("RGBA", region.size, (255, 255, 255, tint_alpha))
-        region.alpha_composite(tint)
-        canvas.paste(region, (x0 - pad, y0 - pad))
+    # ---------- main entry ----------
 
-    def glass_patch(self, canvas, box, radius, blur=20, brighten=1.12, tint_alpha=26):
-        """Like frosted_glass but clipped to a rounded-rect / ellipse mask
-        and returned as its own RGBA layer, so it can be alpha_composited
-        in — used to replace flat white fills with a see-through glass
-        surface (progress track, handle, badges, etc.)."""
-        x0, y0, x1, y1 = box
-        w, h = x1 - x0, y1 - y0
-        pad = blur
-        px0, py0 = max(x0 - pad, 0), max(y0 - pad, 0)
-        px1, py1 = min(x1 + pad, canvas.width), min(y1 + pad, canvas.height)
-        region = canvas.crop((px0, py0, px1, py1)).convert("RGB")
-        region = region.filter(ImageFilter.GaussianBlur(blur))
-        region = ImageEnhance.Brightness(region).enhance(brighten)
-        region = region.convert("RGBA")
+    async def get_thumb(
+        self,
+        videoid: str,
+        title: str,
+        channel: str,
+        views,
+        user_id,
+        thumb_url: str,
+        app_name: str,
+    ) -> str:
+        os.makedirs("cache", exist_ok=True)
+        final_path = f"cache/{videoid}.png"
+        raw_thumb_path = f"cache/thumb_{videoid}.png"
+        avatar_path = f"cache/avatar_{videoid}.jpg"
 
-        layer = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
-        layer.paste(region, (px0, py0))
+        if os.path.isfile(final_path):
+            return final_path
 
-        mask = Image.new("L", canvas.size, 0)
-        ImageDraw.Draw(mask).rounded_rectangle((x0, y0, x1, y1), radius=radius, fill=255)
+        title = title or "Unknown Title"
+        bot_name = app_name or "Bot"
+        powered_text = "Powered by - Team Auro"
 
-        out = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
-        out.paste(layer, (0, 0), mask)
+        ok = bool(thumb_url) and await self.download_file(thumb_url, raw_thumb_path)
+        if not ok:
+            return thumb_url or ""
 
-        tint = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
-        ImageDraw.Draw(tint).rounded_rectangle(
-            (x0, y0, x1, y1), radius=radius, fill=(255, 255, 255, tint_alpha)
-        )
-        out.alpha_composite(tint)
-        return out
+        try:
+            youtube = Image.open(raw_thumb_path).convert("RGBA")
 
-    def lerp_color(self, c1, c2, t):
-        return tuple(int(c1[i] + (c2[i] - c1[i]) * t) for i in range(3))
+            canvas = self.build_background(youtube)
+            canvas.alpha_composite(self.add_shadow(FRAME_RECT, radius=36, blur=30))
 
-    # ---------- background ----------
-
-    def build_background(self, cover_img):
-        """Blurred, softly darkened version of the song's own thumbnail,
-        filling the whole canvas (stable — always fills edge to edge,
-        never cropped weirdly since we fit-crop to the full canvas size
-        before blurring)."""
-        w, h = CANVAS_SIZE
-        bg = self.fit_image(cover_img.convert("RGB"), (w, h))
-        bg = bg.filter(ImageFilter.GaussianBlur(45))
-        bg = ImageEnhance.Brightness(bg).enhance(0.62)
-        bg = ImageEnhance.Color(bg).enhance(1.05)
-
-        # gentle pink/purple wash on top so text and icons stay legible
-        # and it keeps the same soft aesthetic regardless of the cover
-        wash = Image.new("RGBA", (w, h), (60, 20, 70, 70))
-        bg = bg.convert("RGBA")
-        bg.alpha_composite(wash)
-        return bg
-
-    def draw_star(self, draw, cx, cy, size, color, alpha=220):
-        pts = [
-            (cx, cy - size), (cx + size * 0.18, cy - size * 0.18),
-            (cx + size, cy), (cx + size * 0.18, cy + size * 0.18),
-            (cx, cy + size), (cx - size * 0.18, cy + size * 0.18),
-            (cx - size, cy), (cx - size * 0.18, cy - size * 0.18),
-        ]
-        draw.polygon(pts, fill=color + (alpha,))
-
-    def add_sparkles(self, canvas):
-        overlay = Image.new("RGBA", CANVAS_SIZE, (0, 0, 0, 0))
-        draw = ImageDraw.Draw(overlay)
-        rng = random.Random(42)
-        for _ in range(14):
-            x = rng.randint(20, CANVAS_SIZE[0] - 20)
-            y = rng.randint(20, 160)
-            size = rng.randint(4, 11)
-            self.draw_star(draw, x, y, size, COL_WHITE, alpha=rng.randint(150, 230))
-        canvas.alpha_composite(overlay)
-
-    def add_cover_sparkles(self, canvas):
-        """Scatters small stars in a halo around the cover-art box (the
-        area the person circled), so that box gets its own sparkle accent
-        instead of just the plain empty corner it had before."""
-        overlay = Image.new("RGBA", CANVAS_SIZE, (0, 0, 0, 0))
-        draw = ImageDraw.Draw(overlay)
-        rng = random.Random(7)
-
-        cx0, cy0 = COVER_POS[0] - COVER_BORDER, COVER_POS[1] - COVER_BORDER
-        cx1 = COVER_POS[0] + COVER_SIZE[0] + COVER_BORDER
-        cy1 = COVER_POS[1] + COVER_SIZE[1] + COVER_BORDER
-        pad = 26
-
-        for _ in range(16):
-            # pick a point in the padded ring around the cover box, but
-            # outside the box itself
-            side = rng.choice(["top", "bottom", "left", "right"])
-            if side == "top":
-                x = rng.randint(cx0 - pad, cx1 + pad)
-                y = rng.randint(cy0 - pad, cy0)
-            elif side == "bottom":
-                x = rng.randint(cx0 - pad, cx1 + pad)
-                y = rng.randint(cy1, cy1 + pad)
-            elif side == "left":
-                x = rng.randint(cx0 - pad, cx0)
-                y = rng.randint(cy0 - pad, cy1 + pad)
-            else:
-                x = rng.randint(cx1, cx1 + pad)
-                y = rng.randint(cy0 - pad, cy1 + pad)
-            size = rng.randint(5, 13)
-            self.draw_star(draw, x, y, size, COL_WHITE, alpha=rng.randint(160, 235))
-
-        canvas.alpha_composite(overlay)
-
-    # ---------- cover art ----------
-
-    def build_cover(self, cover_img, border_color=COL_WHITE):
-        w, h = COVER_SIZE
-        border = COVER_BORDER
-        cover_rgb = cover_img.convert("RGB")
-
-        # single layer: crop-fill the square directly, no separate blurred
-        # backdrop underneath (that second layer was causing the double
-        # image look around the edges)
-        art = self.fit_image(cover_rgb, (w, h)).convert("RGBA")
-        art = self.add_round_corners(art, COVER_RADIUS)
-
-        outer_w, outer_h = w + border * 2, h + border * 2
-        card = Image.new("RGBA", (outer_w, outer_h), (0, 0, 0, 0))
-        border_rgba = tuple(border_color[:3]) + (255,)
-        ImageDraw.Draw(card).rounded_rectangle(
-            (0, 0, outer_w - 1, outer_h - 1),
-            radius=COVER_RADIUS + border,
-            fill=border_rgba,
-        )
-        card.alpha_composite(art, (border, border))
-
-        # --- FIX (rounded-border shadow mismatch) ---------------------
-        # Previously the shadow box used a width/height that subtracted
-        # `border * 2` from the OUTER card size while still drawing with
-        # radius=COVER_RADIUS (the INNER radius). That mismatch made the
-        # shadow's corners a different curvature than the border's own
-        # corners, so the round border looked uneven/jagged around the
-        # edges. The shadow now uses the exact same outer_w/outer_h and
-        # the exact same COVER_RADIUS + border used for the card itself,
-        # just offset a little downward — so it stays perfectly aligned
-        # with the border's rounding at every corner.
-        shadow = Image.new("RGBA", (CANVAS_SIZE[0], CANVAS_SIZE[1]), (0, 0, 0, 0))
-        sdraw = ImageDraw.Draw(shadow)
-        sx, sy = COVER_POS[0] - border, COVER_POS[1] - border
-        sdraw.rounded_rectangle(
-            (sx + 4, sy + 10, sx + outer_w - 4, sy + outer_h + 10),
-            radius=COVER_RADIUS + border,
-            fill=(0, 0, 0, 60),
-        )
-        shadow = shadow.filter(ImageFilter.GaussianBlur(10))
-
-        return card, shadow
-
-    def draw_heart_badge(self, canvas, center):
-        """Solid white circular badge (unchanged) — only the progress bar
-        track and control pill get the transparent glass treatment."""
-        cx, cy = center
-        r = 26
-        badge = Image.new("RGBA", (r * 2 + 8, r * 2 + 8), (0, 0, 0, 0))
-        bd = ImageDraw.Draw(badge)
-        bd.ellipse((4, 4, r * 2 + 4, r * 2 + 4), fill=(255, 255, 255, 255))
-        hs = r * 0.62
-        ox, oy = r + 4, r + 4
-        bd.ellipse((ox - hs, oy - hs * 0.6, ox, oy + hs * 0.15), fill=(233, 64, 135, 255))
-        bd.ellipse((ox, oy - hs * 0.6, ox + hs, oy + hs * 0.15), fill=(233, 64, 135, 255))
-        bd.polygon(
-            [
-                (ox - hs, oy - hs * 0.05),
-                (ox + hs, oy - hs * 0.05),
-                (ox, oy + hs * 1.1),
-            ],
-            fill=(233, 64, 135, 255),
-        )
-
-        canvas.alpha_composite(badge, (cx - r - 4, cy - r - 4))
-
-    # ---------- progress bar ----------
-
-    def draw_progress_bar(self, canvas, current_sec, total_sec, grad_a, grad_b):
-        draw = ImageDraw.Draw(canvas)
-        w = BAR_X1 - BAR_X0
-        ratio = 0 if total_sec <= 0 else min(current_sec / total_sec, 1.0)
-        handle_x = BAR_X0 + int(w * ratio)
-
-        # track — frosted glass instead of flat white, so the bar reads
-        # as a translucent glass strip that still shows the blurred bg
-        track_box = (BAR_X0, BAR_Y, BAR_X1, BAR_Y + BAR_H)
-        glass_track = self.glass_patch(
-            canvas, track_box, radius=BAR_H // 2, blur=18, brighten=1.05, tint_alpha=35
-        )
-        canvas.alpha_composite(glass_track)
-        track_tint = Image.new("RGBA", CANVAS_SIZE, (0, 0, 0, 0))
-        ImageDraw.Draw(track_tint).rounded_rectangle(
-            track_box, radius=BAR_H // 2, outline=(255, 255, 255, 140), width=1
-        )
-        canvas.alpha_composite(track_tint)
-
-        # filled gradient portion
-        if handle_x > BAR_X0:
-            grad = Image.new("RGBA", (handle_x - BAR_X0, BAR_H), (0, 0, 0, 0))
-            for i in range(grad.width):
-                t = i / max(grad.width - 1, 1)
-                color = self.lerp_color(grad_a, grad_b, t)
-                for y in range(BAR_H):
-                    grad.putpixel((i, y), color + (255,))
-            mask = Image.new("L", grad.size, 0)
-            ImageDraw.Draw(mask).rounded_rectangle(
-                (0, 0, grad.width, BAR_H), radius=BAR_H // 2, fill=255
+            # --- floating card frame ---
+            frame_layer = Image.new("RGBA", CANVAS_SIZE, (0, 0, 0, 0))
+            frame_draw = ImageDraw.Draw(frame_layer)
+            frame_draw.rounded_rectangle(
+                FRAME_RECT,
+                radius=36,
+                fill=(255, 255, 255, 40),
+                outline=(255, 220, 180, 160),
+                width=2,
             )
-            canvas.paste(grad, (BAR_X0, BAR_Y), mask)
+            canvas.alpha_composite(frame_layer)
 
-        # handle — solid white ring (unchanged)
-        hr = 12
-        draw.ellipse(
-            (handle_x - hr - 3, BAR_Y + BAR_H // 2 - hr - 3,
-             handle_x + hr + 3, BAR_Y + BAR_H // 2 + hr + 3),
-            fill=COL_WHITE,
-        )
-        draw.ellipse(
-            (handle_x - hr, BAR_Y + BAR_H // 2 - hr,
-             handle_x + hr, BAR_Y + BAR_H // 2 + hr),
-            fill=grad_a,
-        )
+            # --- artwork, shown in full (no cropping), letterboxed ---
+            art_w, art_h = ART_RECT[2] - ART_RECT[0], ART_RECT[3] - ART_RECT[1]
+            art_letterbox = self.fit_image(youtube, (art_w, art_h))
+            art_letterbox = art_letterbox.filter(ImageFilter.GaussianBlur(14))
+            art_letterbox = ImageEnhance.Brightness(art_letterbox).enhance(0.55)
+            art_box = Image.new("RGBA", (art_w, art_h), (0, 0, 0, 255))
+            art_box.alpha_composite(art_letterbox)
 
-        draw.text((BAR_X0, TIME_Y), self.fmt_time(current_sec),
-                   font=self.font_time, fill=COL_MUTED_TEXT)
-        total_text = self.fmt_time(total_sec)
-        bbox = draw.textbbox((0, 0), total_text, font=self.font_time)
-        tw = bbox[2] - bbox[0]
-        draw.text((BAR_X1 - tw, TIME_Y), total_text,
-                   font=self.font_time, fill=COL_MUTED_TEXT)
+            contained = self.contain_image(youtube, (art_w, art_h)).convert("RGBA")
+            cx = (art_w - contained.width) // 2
+            cy = (art_h - contained.height) // 2
+            art_box.alpha_composite(contained, (cx, cy))
+            art_box = self.add_round_corners(art_box, 26)
+            canvas.alpha_composite(art_box, (ART_RECT[0], ART_RECT[1]))
 
-    # ---------- control icons ----------
+            # --- info panel (glass effect) ---
+            info_layer = Image.new("RGBA", CANVAS_SIZE, (0, 0, 0, 0))
+            info_draw = ImageDraw.Draw(info_layer)
+            info_draw.rounded_rectangle(
+                INFO_RECT, radius=26, fill=(30, 26, 26, 168), outline=(255, 255, 255, 46), width=1
+            )
+            canvas.alpha_composite(info_layer)
 
-    def draw_shuffle(self, draw, cx, cy, size, color):
-        s = size
-        for flip in (1, -1):
-            y1, y2 = cy - s * 0.35 * flip, cy + s * 0.35 * flip
-            draw.line((cx - s, y1, cx + s * 0.55, y2), fill=color, width=4)
-            ah = s * 0.28
-            draw.polygon(
-                [
-                    (cx + s * 0.55, y2 - ah * 0.6),
-                    (cx + s * 0.55 + ah, y2),
-                    (cx + s * 0.55, y2 + ah * 0.6),
-                ],
-                fill=color,
+            # --- avatar ---
+            avatar_source = None
+            if user_id:
+                downloaded = await self.fetch_avatar(user_id, avatar_path)
+                if downloaded and os.path.isfile(downloaded):
+                    avatar_source = Image.open(downloaded).convert("RGBA")
+            if avatar_source is None:
+                avatar_source = youtube
+            avatar = self.add_round_corners(
+                self.fit_image(avatar_source, (AVATAR_SIZE, AVATAR_SIZE)), 20
+            )
+            canvas.alpha_composite(avatar, AVATAR_POS)
+
+            # --- text ---
+            draw = ImageDraw.Draw(canvas)
+            safe_title = self.truncate_text(draw, title, self.font_title, TEXT_AREA_WIDTH)
+            safe_bot_name = self.truncate_text(draw, bot_name, self.font_meta, TEXT_AREA_WIDTH)
+            safe_powered = self.truncate_text(draw, powered_text, self.font_brand, TEXT_AREA_WIDTH)
+
+            draw.text((TEXT_X, INFO_RECT[1] + 18), safe_title, fill="white", font=self.font_title)
+            draw.text(
+                (TEXT_X, INFO_RECT[1] + 68), safe_bot_name, fill=(235, 235, 235), font=self.font_meta
+            )
+            draw.text(
+                (TEXT_X, INFO_RECT[1] + 104), safe_powered, fill=(170, 165, 165), font=self.font_brand
             )
 
-    def draw_skip(self, draw, cx, cy, size, color, direction=1):
-        s = size
-        bar_x = cx + s * 0.9 * direction
-        x0, x1 = sorted((bar_x - 2 * direction, bar_x + 2 * direction))
-        draw.rectangle((x0, cy - s, x1, cy + s), fill=color)
-        for off in (0, s * 0.75):
-            x0 = cx + off * direction
-            tri = [
-                (x0, cy - s),
-                (x0, cy + s),
-                (x0 + s * 0.85 * direction, cy),
-            ]
-            draw.polygon(tri, fill=color)
+            canvas.convert("RGB").save(final_path, quality=95)
+            return final_path
+        except Exception:
+            return thumb_url or ""
+        finally:
+            for p in (raw_thumb_path, avatar_path):
+                if os.path.isfile(p):
+                    try:
+                        os.remove(p)
+                    except OSError:
+                        pass
 
-    def draw_play_triangle(self, draw, cx, cy, size, color):
-        tri = [
-            (cx - size * 0.55, cy - size),
-            (cx - size * 0.55, cy + size),
-            (cx + size * 0.85, cy),
-        ]
-        draw.polygon(tri, fill=color)
+    async def generate(self, media) -> str:
+        """Entry point used by anony.core.calls.TgCall.play_media:
+        `await thumb.generate(media)`, where `media` is a `Track`."""
+        from auro import app
 
-    def draw_repeat(self, draw, cx, cy, size, color):
-        bbox = (cx - size, cy - size, cx + size, cy + size)
-        draw.arc(bbox, start=-30, end=250, fill=color, width=4)
-        angle = math.radians(250)
-        ax = cx + size * math.cos(angle)
-        ay = cy + size * math.sin(angle)
-        ah = size * 0.4
-        draw.polygon(
-            [
-                (ax, ay - ah * 0.5),
-                (ax + ah, ay),
-                (ax, ay + ah * 0.5),
-            ],
-            fill=color,
+        videoid = getattr(media, "id", None) or "thumb"
+        title = getattr(media, "title", None)
+        thumb_url = getattr(media, "thumbnail", None)
+        app_name = getattr(app, "name", None) or "Bot"
+
+        # user_id is only used for the requester's avatar; channel/views
+        # come straight from the track's own metadata.
+        _, user_id = self.parse_mention(getattr(media, "user", None))
+        channel = getattr(media, "channel", None)
+        views = getattr(media, "views", None) or getattr(media, "view_count", None)
+
+        return await self.get_thumb(
+            str(videoid), title, channel, views, user_id, thumb_url, app_name
         )
-
-    def draw_controls(self, canvas, grad_a, grad_b):
-        pill_box = (PILL_X0, PILL_Y0, PILL_X0 + PILL_W, PILL_Y0 + PILL_H)
-
-        # true frosted-glass pill: blur what's already behind it on the
-        # canvas instead of laying down a flat white rectangle
-        mask = Image.new("L", CANVAS_SIZE, 0)
-        ImageDraw.Draw(mask).rounded_rectangle(pill_box, radius=PILL_H // 2, fill=255)
-        pad = 30
-        gx0, gy0 = PILL_X0 - pad, PILL_Y0 - pad
-        gx1, gy1 = PILL_X0 + PILL_W + pad, PILL_Y0 + PILL_H + pad
-        region = canvas.crop((gx0, gy0, gx1, gy1)).convert("RGB")
-        region = region.filter(ImageFilter.GaussianBlur(36))
-        region = ImageEnhance.Brightness(region).enhance(1.1)
-        region = region.convert("RGBA")
-        glass_layer = Image.new("RGBA", CANVAS_SIZE, (0, 0, 0, 0))
-        glass_layer.paste(region, (gx0, gy0))
-        glass_masked = Image.new("RGBA", CANVAS_SIZE, (0, 0, 0, 0))
-        glass_masked.paste(glass_layer, (0, 0), mask)
-        canvas.alpha_composite(glass_masked)
-
-        # faint white wash so it still reads as "glass" not just a blurred
-        # hole — drawn on its own transparent layer then alpha-composited,
-        # since drawing alpha fills directly onto an RGBA canvas overwrites
-        # pixels instead of blending (this was the earlier white-block bug)
-        tint_layer = Image.new("RGBA", CANVAS_SIZE, (0, 0, 0, 0))
-        tdraw = ImageDraw.Draw(tint_layer)
-        tdraw.rounded_rectangle(pill_box, radius=PILL_H // 2, fill=(255, 255, 255, 35))
-        tdraw.rounded_rectangle(pill_box, radius=PILL_H // 2, outline=(255, 255, 255, 130), width=2)
-        canvas.alpha_composite(tint_layer)
-
-        draw = ImageDraw.Draw(canvas, "RGBA")
-
-        cy = PILL_Y0 + PILL_H // 2
-        step = PILL_W // 5
-        centers = [PILL_X0 + step // 2 + step * i for i in range(5)]
-
-        self.draw_shuffle(draw, centers[0], cy, 13, COL_ICON)
-        self.draw_skip(draw, centers[1], cy, 11, COL_ICON, direction=-1)
-
-        # play button (gradient circle, colors follow the song's accent)
-        pr = 34
-        play_circle = Image.new("RGBA", (pr * 2, pr * 2), (0, 0, 0, 0))
-        pdraw = ImageDraw.Draw(play_circle)
-        for y in range(pr * 2):
-            t = y / (pr * 2 - 1)
-            color = self.lerp_color(grad_a, grad_b, t)
-            pdraw.line((0, y, pr * 2, y), fill=color + (255,))
-        mask2 = Image.new("L", (pr * 2, pr * 2), 0)
-        ImageDraw.Draw(mask2).ellipse((0, 0, pr * 2, pr * 2), fill=255)
-        canvas.paste(play_circle, (centers[2] - pr, cy - pr), mask2)
-        self.draw_play_triangle(draw, centers[2], cy, 15, COL_WHITE)
-
-        self.draw_skip(draw, centers[3], cy, 11, COL_ICON, direction=1)
-        self.draw_repeat(draw, centers[4], cy, 13, COL_ICON)
-
-    # ---------- full compose ----------
-
-    def compose(self, cover_img, title: str, subtitle: str, current_sec: int, total_sec: int):
-        """Assembles the whole 1280x720 thumbnail from a PIL cover image
-        plus the track's title/subtitle/progress. Returns an RGB image
-        ready to save/send."""
-        canvas = self.build_background(cover_img)
-
-        grad_a, grad_b = self.extract_accent_colors(cover_img)
-
-        self.add_sparkles(canvas)
-        self.add_cover_sparkles(canvas)
-
-        card, shadow = self.build_cover(cover_img, border_color=COL_WHITE)
-        canvas.alpha_composite(shadow)
-        canvas.alpha_composite(
-            card, (COVER_POS[0] - COVER_BORDER, COVER_POS[1] - COVER_BORDER)
-        )
-
-        heart_cx = COVER_POS[0] + COVER_SIZE[0]
-        heart_cy = COVER_POS[1] + COVER_SIZE[1]
-        self.draw_heart_badge(canvas, (heart_cx, heart_cy))
-
-        draw = ImageDraw.Draw(canvas)
-        title = self.truncate(title, 40)
-        font_t = self.fit_title_font(draw, title, BAR_X1 - TEXT_X, base_size=38)
-        draw.text((TEXT_X, TITLE_Y), title, font=font_t, fill=COL_DARK_TEXT)
-        draw.text((TEXT_X, SUBTITLE_Y), subtitle, font=self.font_subtitle, fill=COL_MUTED_TEXT)
-
-        self.draw_progress_bar(canvas, current_sec, total_sec, grad_a, grad_b)
-        self.draw_controls(canvas, grad_a, grad_b)
-
-        return canvas.convert("RGB")
-
-    # ---------- entry point ----------
-    # NOTE: renamed from `get_thumb` to `generate` — this is the method
-    # name your codebase actually calls (see anony/core/calls.py:
-    # `await thumb.generate(media)`), which is what caused the
-    # AttributeError: 'Thumbnail' object has no attribute 'generate'.
-
-    async def generate(self, media: Track, current_sec: int = 0, output_path: str = None) -> str:
-        """High-level entry point: downloads the track's/media's thumbnail,
-        composes the full player-style image, saves it, and returns the
-        output path. `media` is whatever object your play_media() call
-        passes in (a Track-like object)."""
-        thumb_dir = getattr(config, "THUMB_CACHE_DIR", "cache")
-        os.makedirs(thumb_dir, exist_ok=True)
-
-        media_id = getattr(media, "id", None) or getattr(media, "vidid", None) or "thumb"
-        thumb_url = getattr(media, "thumbnail", None) or getattr(media, "thumb", None)
-        title = getattr(media, "title", "Unknown Title")
-        channel = getattr(media, "channel", None) or getattr(media, "uploader", "Unknown")
-        views = getattr(media, "views", "0")
-        duration = getattr(media, "duration", "0:00")
-
-        raw_path = os.path.join(thumb_dir, f"{media_id}_raw.jpg")
-        await self.save_thumb(raw_path, thumb_url)
-        cover_img = Image.open(raw_path)
-
-        total_sec = self.duration_to_seconds(duration)
-        subtitle = f"{channel}  •  {views} views"
-
-        result = self.compose(cover_img, title, subtitle, current_sec, total_sec)
-
-        output_path = output_path or os.path.join(thumb_dir, f"{media_id}.png")
-        result.save(output_path)
-        return output_path
